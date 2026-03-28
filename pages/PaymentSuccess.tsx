@@ -1,0 +1,173 @@
+
+import React, { useEffect, useRef } from 'react';
+import { useNavigate, useSearchParams, Link } from 'react-router-dom';
+import { CheckCircle, Mail, ArrowRight, Star, ShoppingBag } from 'lucide-react';
+import { useCart } from '../contexts/CartContext';
+import { initMetaPixel, trackPurchase, trackLead, trackContact } from '../services/metaPixel';
+import { supabase } from '../services/supabase';
+
+export const PaymentSuccess: React.FC = () => {
+    const [searchParams] = useSearchParams();
+    const sessionId = searchParams.get('session_id');
+    const totalAmount = searchParams.get('total');
+    const isNewUser = searchParams.get('new_user') === '1';
+    
+    const navigate = useNavigate();
+    const { clearCart } = useCart();
+    
+    // Usiamo un ref per gestire il montaggio immediato, ma sessionStorage per la persistenza vera
+    const processingRef = useRef(false);
+    
+    useEffect(() => {
+        if (!sessionId) {
+            navigate('/');
+            return;
+        }
+
+        const fetchSettingsAndTrack = async () => {
+            // --- SISTEMA ANTI-DUPLICAZIONE EVENTI PIXEL ---
+            const storageKey = `mwa_pixel_tracked_${sessionId}`;
+            const alreadyTracked = sessionStorage.getItem(storageKey);
+
+            if (!alreadyTracked && !processingRef.current) {
+                processingRef.current = true;
+                
+                // 1. Pulisce il carrello
+                clearCart();
+                
+                // 2. Recupera Pixel ID e traccia
+                try {
+                    const { data } = await supabase
+                        .from('platform_settings')
+                        .select('purchase_new_user_pixel_id, purchase_returning_user_pixel_id, general_thank_you_pixel_id')
+                        .single();
+                    
+                    // Seleziona il Pixel ID corretto in base al tipo di utente
+                    const pixelId = isNewUser 
+                        ? (data?.purchase_new_user_pixel_id || data?.general_thank_you_pixel_id)
+                        : (data?.purchase_returning_user_pixel_id || data?.general_thank_you_pixel_id);
+
+                    if (pixelId) {
+                        initMetaPixel(pixelId);
+                    }
+
+                    const value = totalAmount ? parseFloat(totalAmount) : 0;
+
+                    setTimeout(() => {
+                        sessionStorage.setItem(storageKey, 'true');
+
+                        // Evento Purchase con valore dinamico
+                        trackPurchase(value || 0, sessionId);
+
+                        // Eventi richiesti (Lead e Contact)
+                        trackLead();
+                        trackContact();
+                        
+                    }, 750);
+                } catch (err) {
+                    console.error("Errore tracking pixel:", err);
+                }
+            } else {
+                clearCart();
+            }
+        };
+
+        fetchSettingsAndTrack();
+    }, [sessionId, totalAmount, clearCart, navigate, isNewUser]);
+
+    return (
+        <div className="min-h-screen flex flex-col items-center justify-center bg-slate-900 text-white relative overflow-hidden px-4 font-sans">
+             {/* Background Effects */}
+             <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-brand-600 rounded-full blur-[140px] opacity-20 animate-pulse"></div>
+
+             <div className="relative z-10 text-center max-w-lg w-full bg-white/10 backdrop-blur-xl border border-white/10 p-10 rounded-3xl shadow-2xl">
+                
+                {/* Icona Animata */}
+                <div className="mb-8 relative inline-block">
+                    <div className="absolute inset-0 bg-green-500 rounded-full blur-xl opacity-40 animate-pulse"></div>
+                    <div className="w-24 h-24 bg-gradient-to-br from-green-400 to-green-600 rounded-full flex items-center justify-center mx-auto shadow-xl relative z-10">
+                         <CheckCircle className="h-12 w-12 text-white" />
+                    </div>
+                </div>
+
+                <h1 className="text-4xl font-black mb-4 tracking-tight">
+                    {isNewUser ? "Grazie dell'acquisto!" : "Bentornato!"}
+                </h1>
+                
+                <p className="text-lg text-slate-300 mb-8 leading-relaxed">
+                    {isNewUser 
+                        ? "Il pagamento è stato confermato con successo. Benvenuto a bordo."
+                        : "Il tuo nuovo corso è ora disponibile nella tua area riservata."
+                    }
+                </p>
+
+                {/* Box Istruzioni */}
+                <div className="bg-slate-800/80 border border-slate-700 rounded-2xl p-6 mb-8 text-left shadow-inner">
+                    {isNewUser ? (
+                        <>
+                            <div className="flex items-start gap-4 mb-4">
+                                <div className="bg-brand-500/20 p-2 rounded-xl text-brand-400">
+                                    <Mail className="h-6 w-6" />
+                                </div>
+                                <div>
+                                    <h3 className="font-bold text-white text-lg">Controlla la tua Email</h3>
+                                    <p className="text-slate-400 text-sm mt-1">
+                                        Le tue <strong>credenziali di accesso</strong> sono state inviate all'indirizzo email usato per il pagamento.
+                                    </p>
+                                    <p className="text-amber-400 text-xs mt-2 font-semibold">
+                                        ⚠️ Importante: Controlla anche nella cartella SPAM o Posta Indesiderata se non trovi l'email nella posta in arrivo.
+                                    </p>
+                                </div>
+                            </div>
+                            
+                            <div className="flex items-start gap-4">
+                                <div className="bg-purple-500/20 p-2 rounded-xl text-purple-400">
+                                    <Star className="h-6 w-6" />
+                                </div>
+                                <div>
+                                    <h3 className="font-bold text-white text-lg">Accesso Immediato</h3>
+                                    <p className="text-slate-400 text-sm mt-1">
+                                        Usa email e password ricevute per accedere alla dashboard e iniziare a studiare.
+                                    </p>
+                                </div>
+                            </div>
+                        </>
+                    ) : (
+                        <div className="flex items-start gap-4">
+                            <div className="bg-brand-500/20 p-2 rounded-xl text-brand-400">
+                                <Star className="h-6 w-6" />
+                            </div>
+                            <div>
+                                <h3 className="font-bold text-white text-lg">Tutto Pronto!</h3>
+                                <p className="text-slate-400 text-sm mt-1">
+                                    Il percorso è stato aggiunto al tuo account. Puoi trovarlo nella sezione <strong>"I miei corsi"</strong> della tua dashboard.
+                                </p>
+                                <p className="text-slate-400 text-sm mt-4">
+                                    Non hai bisogno di nuove credenziali, usa quelle che già possiedi.
+                                </p>
+                            </div>
+                        </div>
+                    )}
+                </div>
+
+                {/* Totale Pagato (Opzionale, visivo per l'utente) */}
+                {totalAmount && (
+                    <div className="flex justify-center items-center gap-2 mb-8 text-slate-400 text-sm uppercase tracking-widest font-bold">
+                        <ShoppingBag className="h-4 w-4"/> Totale Pagato: <span className="text-white">€{totalAmount}</span>
+                    </div>
+                )}
+
+                <Link 
+                    to={isNewUser ? '/login' : '/dashboard'}
+                    className="w-full bg-white text-slate-900 py-4 rounded-xl font-bold text-lg hover:bg-brand-50 hover:text-brand-700 transition-all flex items-center justify-center group shadow-lg shadow-white/10"
+                >
+                    {isNewUser ? "Vai al Login" : "Vai ai miei Corsi"} <ArrowRight className="ml-2 h-5 w-5 group-hover:translate-x-1 transition-transform" />
+                </Link>
+             </div>
+             
+             <p className="mt-8 text-slate-500 text-sm text-center">
+                 Hai bisogno di aiuto? Scrivici a <a href="mailto:info.moisewebaccademy@gmail.com" className="text-brand-400 hover:underline">info.moisewebaccademy@gmail.com</a> o contattaci su WhatsApp.
+             </p>
+        </div>
+    );
+};
